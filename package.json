@@ -1,0 +1,22 @@
+{
+  "name": "color-clash-puzzle",
+  "version": "1.0.0",
+  "description": "Color Clash - An original physics-based puzzle game with unique barrier mechanics",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.23",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^4.3.3",
+    "typescript": "^5.6.3",
+    "vite": "^6.3.5"
+  }
+}
