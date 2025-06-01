@@ -1,0 +1,11 @@
+{
+  "name": "Tube Sort 3D - Premium Puzzle Game",
+  "short_name": "Tube Sort 3D",
+  "description": "Premium 3D tube sorting puzzle game with realistic graphics and haptic feedback",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#3b82f6",
+  "orientation": "portrait",
+  "categories": ["games", "entertainment"]
+}

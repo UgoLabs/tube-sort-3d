@@ -4,17 +4,35 @@ import './App.css';
 interface Ball {
   id: number;
   color: string;
+  isLocked?: boolean; // Added for locked balls
 }
 
 interface Tube {
   id: number;
   balls: Ball[];
-  maxCapacity: number;
+  maxCapacity: number; // Will now vary
 }
 
-// Simple color palette - now with 12 colors
-const COLORS = ['red', 'blue', 'green', 'yellow', 'purple', 'orange', 'pink', 'cyan', 'magenta', 'lime', 'indigo', 'amber'];
-const TUBE_CAPACITY = 4;
+const DEFAULT_TUBE_CAPACITY = 4; // Renamed for clarity
+const COLORS = [
+  '#FF3B82', // Vibrant Pink
+  '#00D9FF', // Electric Blue  
+  '#32D74B', // Neon Green
+  '#FF9F0A', // Electric Orange
+  '#BF5AF2', // Purple Glow
+  '#FF453A', // Bright Red
+  '#5AC8FA', // Sky Blue
+  '#FFCC02'  // Golden Yellow
+];
+
+// Helper to check if a single tube is sorted
+const isTubeSorted = (tube: Tube): boolean => {
+  if (tube.balls.length === 0) return true; // Empty is considered sorted for this check's purpose
+  if (tube.balls.length !== tube.maxCapacity) return false;
+  const firstColor = tube.balls[0].color;
+  return tube.balls.every(ball => ball.color === firstColor && !ball.isLocked); // Sorted tube shouldn't contain locked balls
+};
+
 
 function App() {
   const [score, setScore] = useState(0);
@@ -24,319 +42,327 @@ function App() {
   const [selectedTube, setSelectedTube] = useState<number | null>(null);
   const [moves, setMoves] = useState(0);
   const [gameWon, setGameWon] = useState(false);
-  const [loading, setLoading] = useState(true);
 
-  // Simple loading
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setLoading(false);
-    }, 1000);
-    return () => clearTimeout(timer);
-  }, []);
-
-  // Helper function to determine grid class based on tube count
-  const getTubeGridClass = (tubeCount: number) => {
-    if (tubeCount <= 8) return 'tubes-5-8';
-    if (tubeCount <= 12) return 'tubes-9-12';
-    if (tubeCount <= 16) return 'tubes-13-16';
-    if (tubeCount <= 24) return 'tubes-17-24';
-    return 'tubes-25-plus';
+  // Mobile haptic feedback
+  const triggerHaptic = (type: 'light' | 'medium' | 'heavy') => {
+    if ('vibrate' in navigator) {
+      const patterns = { light: [10], medium: [20], heavy: [30] };
+      navigator.vibrate(patterns[type]);
+    }
   };
 
-  // Simple game initialization
-  const initializeGame = () => {
-    // Simple level configuration
-    const numColors = Math.min(3 + Math.floor(level / 2), 8);
-    
-    const newTubes: Tube[] = [];
-    let ballId = 1;
-    
-    // Create 2 empty tubes first
-    for (let i = 0; i < 2; i++) {
-      newTubes.push({
-        id: i,
-        balls: [],
-        maxCapacity: TUBE_CAPACITY
-      });
-    }
-    
-    // Create filled tubes - one per color
-    for (let i = 0; i < numColors; i++) {
-      const tube: Tube = {
-        id: i + 2,
-        balls: [],
-        maxCapacity: TUBE_CAPACITY
-      };
-      
-      // Fill tube with same color balls
-      const color = COLORS[i];
-      for (let j = 0; j < TUBE_CAPACITY; j++) {
-        tube.balls.push({
-          id: ballId++,
-          color: color
-        });
-      }
-      newTubes.push(tube);
-    }
-    
-    // Simple shuffle - move some balls to create puzzle
-    const shuffleTubes = newTubes.slice(2); // Only shuffle the filled tubes
-    const allBalls: Ball[] = [];
-    
-    // Collect all balls
-    shuffleTubes.forEach(tube => {
-      allBalls.push(...tube.balls);
-      tube.balls = [];
+  // Create a ball
+  const createBall = (id: number, color: string, isLocked = false): Ball => ({ id, color, isLocked });
+
+  // Create a tube
+  const createTube = (id: number, maxCapacity: number): Tube => ({
+    id,
+    balls: [],
+    maxCapacity
+  });
+
+  // Unlock all balls
+  const unlockAllBalls = (currentTubes: Tube[]): Tube[] => {
+    return currentTubes.map(tube => ({
+      ...tube,
+      balls: tube.balls.map(ball => ({ ...ball, isLocked: false }))
+    }));
+  };
+  
+  // Check win condition
+  const checkWinCondition = (currentTubes: Tube[]): boolean => {
+    return currentTubes.every(tube => {
+      if (tube.balls.length === 0) return true;
+      // For win condition, a tube must be full to its capacity with same colored, unlocked balls
+      if (tube.balls.length !== tube.maxCapacity) return false; 
+      const firstColor = tube.balls[0].color;
+      return tube.balls.every(ball => ball.color === firstColor && !ball.isLocked);
     });
+  };
+
+  // Check if move is valid
+  const isValidMove = (fromTube: Tube, toTube: Tube): boolean => {
+    if (fromTube.balls.length === 0) return false;
+    if (toTube.balls.length >= toTube.maxCapacity) return false; // Use tube's specific maxCapacity
+
+    const movingBall = fromTube.balls[fromTube.balls.length - 1];
+    if (movingBall.isLocked) return false; // Cannot move locked balls
+
+    if (toTube.balls.length === 0) return true;
     
-    // Redistribute balls randomly but solvable
-    const shuffledBalls = [...allBalls].sort(() => Math.random() - 0.5);
-    let tubeIndex = 2; // Start with first filled tube
+    const topBall = toTube.balls[toTube.balls.length - 1];
     
-    for (let i = 0; i < shuffledBalls.length; i++) {
-      if (newTubes[tubeIndex].balls.length >= TUBE_CAPACITY) {
-        tubeIndex++;
-        if (tubeIndex >= newTubes.length) {
-          tubeIndex = 2; // Wrap around to filled tubes
+    return movingBall.color === topBall.color && !topBall.isLocked; // Cannot stack on a locked ball if it's the top one
+  };
+
+  // Initialize game
+  const initializeGame = (targetLevel: number) => {
+    const numColors = Math.min(3 + Math.floor(targetLevel / 2), COLORS.length);
+    const ballsPerColor = DEFAULT_TUBE_CAPACITY; // Each color group has this many balls
+    let numTubes = numColors + 2; // Start with 2 extra empty tubes
+
+    // --- Variable Capacity Tubes ---
+    const newTubes: Tube[] = [];
+    let totalCapacity = 0;
+    const minTubeCapacity = 2; // Minimum capacity for a tube
+
+    for (let i = 0; i < numTubes; i++) {
+      let capacity = DEFAULT_TUBE_CAPACITY;
+      if (targetLevel >= 3 && i < numColors) { // Only vary capacity of initially filled tubes
+        if (i % 3 === 0 && targetLevel >= 5) { // Example: Every 3rd tube in harder levels
+            capacity = Math.max(minTubeCapacity, DEFAULT_TUBE_CAPACITY -1);
+        } else if (i % 4 === 0 && targetLevel >= 7) {
+             capacity = Math.max(minTubeCapacity, DEFAULT_TUBE_CAPACITY -2);
         }
       }
-      newTubes[tubeIndex].balls.push(shuffledBalls[i]);
+      newTubes.push(createTube(i + 1, capacity));
+      totalCapacity += capacity;
     }
     
+    // Ensure enough total capacity for all balls
+    const requiredTotalBalls = numColors * ballsPerColor;
+    if (totalCapacity < requiredTotalBalls) {
+        // If not enough, add a tube or revert some capacities to default.
+        // For simplicity, we'll add one more default capacity tube if short.
+        // This logic can be refined for more complex level design.
+        const diff = requiredTotalBalls - totalCapacity;
+        const extraTubesNeeded = Math.ceil(diff / DEFAULT_TUBE_CAPACITY);
+        for(let k=0; k < extraTubesNeeded; k++) {
+            newTubes.push(createTube(newTubes.length + 1, DEFAULT_TUBE_CAPACITY));
+            numTubes++;
+        }
+    }
+
+
+    // --- Create and Distribute Balls ---
+    const allBalls: Ball[] = [];
+    let ballId = 1;
+    for (let colorIndex = 0; colorIndex < numColors; colorIndex++) {
+      for (let i = 0; i < ballsPerColor; i++) {
+        // --- Locked Balls ---
+        let shouldLock = false;
+        if (targetLevel >= 4 && colorIndex < 2 && i === 0) { // Lock the first ball of the first two colors on level 4+
+            shouldLock = true;
+        }
+         if (targetLevel >= 6 && colorIndex < numColors && i < 2 && Math.random() < 0.2) { // Lock first 2 balls of any color randomly on higher levels
+            shouldLock = true;
+        }
+        allBalls.push(createBall(ballId++, COLORS[colorIndex], shouldLock));
+      }
+    }
+    
+    // Shuffle balls
+    for (let i = allBalls.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [allBalls[i], allBalls[j]] = [allBalls[j], allBalls[i]];
+    }
+    
+    // Distribute balls into tubes, respecting individual capacities
+    let ballIndex = 0;
+    for (let i = 0; i < numColors; i++) { // Only fill the initial 'numColors' tubes
+        if (ballIndex >= allBalls.length) break;
+        const tube = newTubes[i];
+        const ballsToPlaceInTube = Math.min(tube.maxCapacity, ballsPerColor); // Don't overfill based on color count alone
+        for (let j = 0; j < ballsToPlaceInTube && ballIndex < allBalls.length; j++) {
+            if(tube.balls.length < tube.maxCapacity) {
+                tube.balls.push(allBalls[ballIndex++]);
+            }
+        }
+    }
+    // Ensure remaining tubes are empty
+     for (let i = numColors; i < newTubes.length; i++) {
+        newTubes[i].balls = [];
+    }
+
     setTubes(newTubes);
     setMoves(0);
     setGameWon(false);
-    setSelectedTube(null);
+    // setGameRunning(true); // This is set by startGame or nextLevel
   };
 
-  // Simple win condition check
-  const checkWinCondition = (currentTubes: Tube[]) => {
-    return currentTubes.every(tube => {
-      if (tube.balls.length === 0) return true; // Empty tubes are valid
-      if (tube.balls.length !== TUBE_CAPACITY) return false; // Must be full
-      const firstColor = tube.balls[0].color;
-      return tube.balls.every(ball => ball.color === firstColor); // All same color
-    });
-  };
-
-  // Simple move validation
-  const isValidMove = (fromTube: Tube, toTube: Tube): boolean => {
-    if (fromTube.balls.length === 0) return false; // Can't move from empty tube
-    if (toTube.balls.length >= toTube.maxCapacity) return false; // Can't move to full tube
-    
-    if (toTube.balls.length === 0) return true; // Can move to empty tube
-    
-    const topBallFrom = fromTube.balls[fromTube.balls.length - 1];
-    const topBallTo = toTube.balls[toTube.balls.length - 1];
-    
-    return topBallFrom.color === topBallTo.color; // Same color only
-  };
-
-  // Simple tube click handler
+  // Handle tube click
   const handleTubeClick = (tubeId: number) => {
     if (!gameRunning || gameWon) return;
     
-    const tube = tubes.find(t => t.id === tubeId);
-    if (!tube) return;
+    const clickedTubeIndex = tubes.findIndex(t => t.id === tubeId);
+    if (clickedTubeIndex === -1) return;
+
+    triggerHaptic('light');
     
     if (selectedTube === null) {
-      // Select tube if it has balls
+      const tube = tubes[clickedTubeIndex];
       if (tube.balls.length > 0) {
+        const topBall = tube.balls[tube.balls.length - 1];
+        if (topBall.isLocked) {
+          triggerHaptic('heavy'); // Indicate locked ball
+          // Optionally, add a visual cue like shaking the ball/tube
+          return;
+        }
         setSelectedTube(tubeId);
+        triggerHaptic('medium');
       }
     } else {
-      if (selectedTube === tubeId) {
-        // Deselect if clicking same tube
-        setSelectedTube(null);
-      } else {
-        // Try to move ball
-        const fromTube = tubes.find(t => t.id === selectedTube);
-        const toTube = tube;
-        
-        if (fromTube && isValidMove(fromTube, toTube)) {
-          // Valid move - update tubes
-          const newTubes = tubes.map(t => {
-            if (t.id === selectedTube) {
-              return {
-                ...t,
-                balls: t.balls.slice(0, -1) // Remove top ball
-              };
-            } else if (t.id === tubeId) {
-              const ballToMove = fromTube.balls[fromTube.balls.length - 1];
-              return {
-                ...t,
-                balls: [...t.balls, ballToMove] // Add ball on top
-              };
-            }
-            return t;
-          });
-          
-          setTubes(newTubes);
-          setMoves(moves + 1);
+      const fromTubeIndex = tubes.findIndex(t => t.id === selectedTube);
+      const toTubeIndex = clickedTubeIndex;
+
+      if (fromTubeIndex === -1) { // Should not happen if selectedTube is not null
           setSelectedTube(null);
+          return;
+      }
+
+      if (selectedTube === tubeId) { // Clicked the same tube again
+        setSelectedTube(null);
+        triggerHaptic('light');
+      } else {
+        const fromTube = tubes[fromTubeIndex];
+        const toTube = tubes[toTubeIndex];
+        
+        if (isValidMove(fromTube, toTube)) {
+          let newTubes = tubes.map(t => ({ ...t, balls: [...t.balls] })); // Deep copy for modification
+          const movingBall = newTubes[fromTubeIndex].balls.pop()!;
+          newTubes[toTubeIndex].balls.push(movingBall);
           
-          // Check for victory
+          setMoves(prev => prev + 1);
+          setSelectedTube(null);
+          triggerHaptic('medium');
+
+          // --- Check for unlocking balls ---
+          let shouldUnlock = false;
+          if (isTubeSorted(newTubes[toTubeIndex])) { // Check if the tube the ball moved TO is now sorted
+            shouldUnlock = true;
+          }
+          if (shouldUnlock) {
+            newTubes = unlockAllBalls(newTubes);
+          }
+          
+          setTubes(newTubes); // Set tubes after potential unlock
+
           if (checkWinCondition(newTubes)) {
             setGameWon(true);
-            setScore(score + (100 * level) - moves);
+            setGameRunning(false);
+            setScore(prev => prev + Math.max(0, (100 * level) - (moves + 1)));
+            triggerHaptic('heavy');
           }
         } else {
-          // Invalid move - just select the clicked tube if it has balls
-          if (tube.balls.length > 0) {
-            setSelectedTube(tubeId);
-          } else {
-            setSelectedTube(null);
-          }
+          triggerHaptic('heavy');
+          setSelectedTube(null); // Deselect if move is invalid
         }
       }
     }
   };
 
-  // Game control functions
+  // Start game
   const startGame = () => {
+    setLevel(1); // Reset level to 1 when starting a new game
+    setScore(0); // Reset score
     setGameRunning(true);
-    setScore(0);
-    setLevel(1);
-    initializeGame();
+    initializeGame(1);
   };
 
-  const resetGame = () => {
-    initializeGame();
-  };
-
+  // Next level
   const nextLevel = () => {
-    setLevel(level + 1);
-    setMoves(0);
-    setGameWon(false);
-    initializeGame();
+    const newLevel = level + 1;
+    setLevel(newLevel);
+    initializeGame(newLevel);
+    setGameRunning(true);
   };
 
-  if (loading) {
-    return (
-      <div className="loading-screen">
-        <div className="loading-logo">🧪 TUBE SORT 3D</div>
-      </div>
-    );
-  }
+  // Reset game
+  const resetGame = () => {
+    setGameRunning(true); 
+    initializeGame(level); // Re-initialize current level
+    setMoves(0); // Reset moves for the current level attempt
+  };
 
   return (
     <div className="game-container">
       {/* Header */}
       <div className="game-header">
-        <div className="game-title">🧪 Tube Sort 3D</div>
+        <h1 className="game-title">🎯 Ball Sort</h1>
         <div className="game-stats">
-          <div className="stat-item">Level {level}</div>
-          <div className="stat-item">Score: {score}</div>
-          <div className="stat-item">Moves: {moves}</div>
+          <div className="stat">
+            <span className="stat-label">Level</span>
+            <span className="stat-value">{level}</span>
+          </div>
+          <div className="stat">
+            <span className="stat-label">Score</span>
+            <span className="stat-value">{score}</span>
+          </div>
+          <div className="stat">
+            <span className="stat-label">Moves</span>
+            <span className="stat-value">{moves}</span>
+          </div>
         </div>
       </div>
 
-      {!gameRunning ? (
-        /* Menu Screen */
-        <div className="game-board" style={{ 
-          flexDirection: 'column', 
-          alignItems: 'center', 
-          justifyContent: 'center', 
-          textAlign: 'center',
-          color: '#e2e8f0'
-        }}>
-          <h2 style={{ 
-            fontSize: '36px', 
-            marginBottom: '20px',
-            background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent'
-          }}>
-            Welcome to Tube Sort 3D
-          </h2>
-          <p style={{ 
-            fontSize: '18px', 
-            marginBottom: '30px', 
-            maxWidth: '600px',
-            lineHeight: '1.6'
-          }}>
-            Sort colored balls into tubes so each tube contains only one color.
-            Vertical mobile-optimized design with 2x smaller balls and enhanced colors.
-          </p>
-          <button className="elite-button" onClick={startGame}>
-            🚀 Start Game
-          </button>
-        </div>
-      ) : (
-        /* Game Board */
-        <div className={`game-board ${getTubeGridClass(tubes.length)}`}>
+      {/* Game Board */}
+      {gameRunning && (
+        <div className="game-board">
           {tubes.map((tube) => (
             <div
               key={tube.id}
               className={`tube ${selectedTube === tube.id ? 'selected' : ''}`}
               onClick={() => handleTubeClick(tube.id)}
             >
-              {/* Tube depth effect */}
-              <div className="tube-depth" />
-              
-              {/* Balls */}
-              {Array.from({ length: TUBE_CAPACITY }, (_, index) => {
-                const ballIndex = TUBE_CAPACITY - 1 - index;
-                const ball = tube.balls[ballIndex];
-                return ball ? (
-                  <div
-                    key={`${ball.id}-${index}`}
-                    className={`ball ${ball.color}`}
-                    style={{
-                      bottom: `${index * 35 + 8}px`
-                    }}
-                  >
-                    <div className="rim-light" />
-                  </div>
-                ) : null;
-              })}
+              {/* Visual representation of tube capacity could be done here if desired, e.g. different height style */}
+              <div className="tube-container">
+                {/* Render ball slots up to tube.maxCapacity */}
+                {Array.from({ length: tube.maxCapacity }, (_, index) => {
+                  const ball = tube.balls[index];
+                  return (
+                    <div
+                      key={index}
+                      className={`ball-slot ${ball ? 'filled' : 'empty'}`}
+                    >
+                      {ball && (
+                        <div
+                          className={`ball ${ball.isLocked ? 'locked' : ''}`}
+                          style={{ backgroundColor: ball.isLocked ? '#777' : ball.color }} // Grey out locked balls or use color
+                        >
+                          {ball.isLocked && <span className="lock-icon">🔒</span>} {/* Simple lock icon */}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           ))}
         </div>
       )}
 
-      {/* Action Buttons */}
-      {gameRunning && (
-        <div className="action-buttons">
-          <button className="elite-button" onClick={resetGame}>
-            🔄 Reset
+      {/* Menu */}
+      {!gameRunning && !gameWon && (
+        <div className="menu">
+          <h2 className="menu-subtitle">Sort the glowing orbs!</h2>
+          <p className="menu-description">
+            Tap tubes to move balls. Group same colors in each tube.
+            Complete a tube to unlock any locked balls!
+          </p>
+          <button className="start-button" onClick={startGame}>
+            🎮 Start Game
           </button>
-          {gameWon && (
-            <button className="elite-button" onClick={nextLevel}>
-              ⚡ Next Level
-            </button>
-          )}
         </div>
       )}
 
-      {/* Victory Message */}
+      {/* Controls */}
+      {gameRunning && !gameWon && (
+        <div className="controls">
+          <button className="control-button" onClick={resetGame}>
+            🔄 Reset
+          </button>
+        </div>
+      )}
+
+      {/* Victory */}
       {gameWon && (
-        <div style={{
-          position: 'fixed',
-          top: '50%',
-          left: '50%',
-          transform: 'translate(-50%, -50%)',
-          background: 'linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(30, 41, 59, 0.95))',
-          backdropFilter: 'blur(25px)',
-          border: '2px solid rgba(59, 130, 246, 0.3)',
-          borderRadius: '20px',
-          padding: '30px',
-          textAlign: 'center',
-          color: '#e2e8f0',
-          zIndex: 200,
-          boxShadow: '0 25px 80px rgba(0, 0, 0, 0.4)'
-        }}>
-          <h3 style={{ 
-            fontSize: '28px', 
-            marginBottom: '15px',
-            background: 'linear-gradient(135deg, #3b82f6, #8b5cf6, #ec4899)',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent'
-          }}>
-            🎉 Level Complete! 🎉
-          </h3>
-          <p>✨ Completed in {moves} moves</p>
-          <p>💎 Score: +{(100 * level) - moves}</p>
+        <div className="victory">
+          <h2 className="victory-title">🎉 Level Complete!</h2>
+          <p className="victory-text">Completed in {moves} moves</p>
+          <p className="victory-bonus">+{Math.max(0, (100 * level) - moves)} points</p>
+          <button className="control-button next" onClick={nextLevel}>
+            ⭐ Next Level
+          </button>
         </div>
       )}
     </div>
